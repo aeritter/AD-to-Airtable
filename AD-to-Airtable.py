@@ -123,7 +123,7 @@ def uploadDataToAirtable(content, sendType):                 # uploads the data 
         print(str(json.loads(x.text)['error']['message']))
         return {'content':str(content), 'status code: ':str(x.status_code), 'failureText':str(json.loads(x.text)['error']['message'])}
 
-def retrieveRecordsFromAD(ADSearchParams, ADSearchAttributes):
+def retrieveRecordsFromAD(ADSearchAttributes, ADSearchParams):
     ADserver = ldap3.Server(ADdomain, use_ssl=False) # NOTE: PLEASE GET SECURE LDAP RUNNING ON THE DOMAIN CONTROLLER, THEN CHANGE use_ssl TO True
     ADconnection = ldap3.Connection(ADserver, user=ADdomain+"\\"+ADusername, password=ADuserpass, authentication=ldap3.NTLM, auto_bind=True)
 
@@ -147,8 +147,18 @@ def retrieveRecordsFromAD(ADSearchParams, ADSearchAttributes):
     return adlist
 
 def getInfoFromGUID(GUID):
-    return retrieveRecordsFromAD({'objectGUID':GUID}, allADSearchAttributes)[GUID]
+    return retrieveRecordsFromAD(allADSearchAttributes, {'objectGUID':GUID})[GUID]
 
+def initialCheck(ATRecords):
+    ADrecords = retrieveRecordsFromAD(allADSearchAttributes, allUserADSearchParams)
+    recordsToSend = []  # list of lists, with those sublists containing up to 10 entries to send to Airtable
+    for x in ADrecords:
+        if x not in ATRecords.records:
+            recordsToSend.append({"fields":ADrecords[x]})
+    for x in range(0, len(recordsToSend), 10):
+        y = uploadDataToAirtable({"records":[z for z in recordsToSend[x:x+10]], "typecast":True}, "Post")
+        for z in y['records']:
+            ATRecords.records[z['fields']['objectGUID']] = z['id']
 
 
 
@@ -161,6 +171,7 @@ def main():
     # eventPulse = win32event.CreateEvent(None, 0, 0, None)
     ADAccountsChanged = set()
     ATRecords = airtable()
+    initialCheck(ATRecords)                         # Verify all AD records are present in AT on script startup, add missing records
 
     def eventTriggered(evt1, evt2, eventContent):   #evt1: int specifying why the function was called | evt2: context object (5th parameter in EvtSubscribe)
         print('triggered')
@@ -178,6 +189,7 @@ def main():
     while True:
         try:
             time.sleep(10)  # every 10 seconds, check if a user has been updated and reconcile records
+                            # Maybe: Remove this, use trigger below. If pulse comes, wait 1 second. If another pulse comes during that time, reset the wait. If one doesn't, continue processing
 
             if len(ADAccountsChanged) == 0:
                 continue
