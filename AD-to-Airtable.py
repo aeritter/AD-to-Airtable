@@ -132,16 +132,18 @@ def retrieveRecordsFromAD(ADSearchAttributes, ADSearchParams):
     for x in ADconnection.entries:
         loadedAttributes = json.loads(x.entry_to_json())['attributes']
 
-        if 'objectGUID' in loadedAttributes:
+        if 'objectGUID' in loadedAttributes and 'givenName' in loadedAttributes and len(loadedAttributes['givenName']) != 0:     # Skip any entries where the givenName attribute is blank.
             GUID = loadedAttributes['objectGUID'][0]
             adlist[GUID] = {}
-        
             for attributeName, attributeContents in loadedAttributes.items():
                 correctedAttributeName = convADAttributeToAirtableHeader[attributeName]
                 if attributeContents == []:
                     adlist[GUID][correctedAttributeName] = ''
                 else:
                     adlist[GUID][correctedAttributeName] = attributeContents[0]
+        else:
+            print("Ignoring: "+loadedAttributes['sAMAccountName'][0])
+            pass
     ADconnection.unbind()
     # print(adlist)
     return adlist
@@ -151,14 +153,23 @@ def getInfoFromGUID(GUID):
 
 def initialCheck(ATRecords):
     ADrecords = retrieveRecordsFromAD(allADSearchAttributes, allUserADSearchParams)
+    recordsToUpdate = []
     recordsToSend = []  # list of lists, with those sublists containing up to 10 entries to send to Airtable
     for x in ADrecords:
         if x not in ATRecords.records:
             recordsToSend.append({"fields":ADrecords[x]})
+        else:
+            recordsToUpdate.append({"id":ATRecords.records[x], "fields":ADrecords[x]})
+    print("Updating current entries in Airtable.")
+    for x in range(0, len(recordsToUpdate), 10):
+        y = uploadDataToAirtable({"records":[z for z in recordsToUpdate[x:x+10]], "typecast":True}, "Update")
+    print("Done updating.")
+    print("Uploading to Airtable any missing entries.")
     for x in range(0, len(recordsToSend), 10):
         y = uploadDataToAirtable({"records":[z for z in recordsToSend[x:x+10]], "typecast":True}, "Post")
         for z in y['records']:
             ATRecords.records[z['fields']['objectGUID']] = z['id']
+    print("Done.")
 
 
 
@@ -172,14 +183,16 @@ def main():
     ADAccountsChanged = set()
     ATRecords = airtable()
     initialCheck(ATRecords)                         # Verify all AD records are present in AT on script startup, add missing records
+    print("Now watching Event Viewer for new AD Users and for AD User updates.")
 
     def eventTriggered(evt1, evt2, eventContent):   #evt1: int specifying why the function was called | evt2: context object (5th parameter in EvtSubscribe)
         print('triggered')
         xmlData = win32evtlog.EvtRender(eventContent, win32evtlog.EvtRenderEventXml)
         GUID = re.search(r'<Data Name=\'ObjectGUID\'>(.*?)</Data>', xmlData).group(1)
-        badGUID = bool('$' in re.search(r'<Data Name=\'SubjectUserName\'>(.*?)</Data.', xmlData).group(1))
+        subjectusername = re.search(r'<Data Name=\'SubjectUserName\'>(.*?)</Data.', xmlData).group(1)
+        badGUID = bool('$' in subjectusername or len(subjectusername) == 0)  # badGUID = True if the SubjectUserName has a $ in it OR has no text. False otherwise.
         if not badGUID:
-            ADAccountsChanged.add(GUID)
+            ADAccountsChanged.add(GUID.lower())
         # win32event.PulseEvent(eventPulse)
 
 
@@ -206,7 +219,7 @@ def main():
                 else:
                     y = uploadDataToAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
                     if type(y) == dict:
-                        ATRecords.records[GUID] = json.loads(y['id'])
+                        ATRecords.records[GUID] = y['id']
                 # print(getInfoFromGUID(GUID))
                 ADAccountsChanged.remove(GUID)
 
@@ -216,9 +229,9 @@ def main():
             # elif trigger == win32event.WAIT_OBJECT_0:
             #     hasTimedOut = False
         except Exception:
-            eventLog.CloseEventLog()
+            win32evtlog.CloseEventLog(eventLog)
             evtSession.CloseEventLog()
-            eventLog2.CloseEventLog()
+            win32evtlog.CloseEventLog(eventLog2)
             evtSession2.CloseEventLog()
         except KeyboardInterrupt:
             eventLog.CloseEventLog()
