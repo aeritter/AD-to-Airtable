@@ -30,7 +30,15 @@ allADSearchAttributes = [
     'sn',
     'l',
     'info',
-    'sAMAccountName'
+    'sAMAccountName',
+    'telephoneNumber',
+    'proxyAddresses',
+    'title',
+    'department',
+    'company',
+    'manager',
+    'description'
+
 ]
 
 
@@ -61,7 +69,14 @@ convADAttributeToAirtableHeader = {
     'givenName':'First Name',
     'mail':'Email Address',
     'sAMAccountName':'Login Name',
-    'l':'Location'
+    'l':'Location',
+    'telephoneNumber':'Telephone Number',
+    'proxyAddresses':'Proxy Addresses',
+    'title':'Title',
+    'department':'Department',
+    'company':'Company',
+    'manager':'Manager',
+    'description':'Description'
 
 }
 
@@ -109,9 +124,11 @@ def postOrUpdate(content, sendType):
         return requests.post(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
     elif sendType == "Update":
         return requests.patch(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
+    elif sendType == "Remove":          # Content must be a string containing a single record ID.
+        return requests.delete(airtableURL+"/"+content,headers=AirtableAPIHeaders)
 
 
-def uploadDataToAirtable(content, sendType):                 # uploads the data to Airtable
+def changeDataInAirtable(content, sendType):                 # uploads the data to Airtable
     if enableAirtablePosts != True:
         return "Airtable connection disabled."
     x = postOrUpdate(content, sendType)
@@ -160,17 +177,25 @@ def initialCheck(ATRecords):
             recordsToSend.append({"fields":ADrecords[x]})
         else:
             recordsToUpdate.append({"id":ATRecords.records[x], "fields":ADrecords[x]})
+
+    print("Removing entries from Airtable that do not exist in AD.")
+    for x in ATRecords.records:
+        if x not in ADrecords:
+            print('id to remove: '+ATRecords.records[x])
+            changeDataInAirtable(ATRecords.records[x], "Remove")
+    print("Done removing bad records")
+
     print("Updating current entries in Airtable.")
     for x in range(0, len(recordsToUpdate), 10):
-        y = uploadDataToAirtable({"records":[z for z in recordsToUpdate[x:x+10]], "typecast":True}, "Update")
+        y = changeDataInAirtable({"records":[z for z in recordsToUpdate[x:x+10]], "typecast":True}, "Update")
     print("Done updating.")
+
     print("Uploading to Airtable any missing entries.")
     for x in range(0, len(recordsToSend), 10):
-        y = uploadDataToAirtable({"records":[z for z in recordsToSend[x:x+10]], "typecast":True}, "Post")
+        y = changeDataInAirtable({"records":[z for z in recordsToSend[x:x+10]], "typecast":True}, "Post")
         for z in y['records']:
             ATRecords.records[z['fields']['objectGUID']] = z['id']
-    print("Done.")
-
+    print("Done uploading.")
 
 
 def main():
@@ -183,6 +208,7 @@ def main():
     ADAccountsChanged = set()
     ATRecords = airtable()
     initialCheck(ATRecords)                         # Verify all AD records are present in AT on script startup, add missing records
+
     print("Now watching Event Viewer for new AD Users and for AD User updates.")
 
     def eventTriggered(evt1, evt2, eventContent):   #evt1: int specifying why the function was called | evt2: context object (5th parameter in EvtSubscribe)
@@ -215,9 +241,9 @@ def main():
                 print(GUID)
                 if GUID in ATRecords.records:
                     print({"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID), "typecast":True})
-                    y = uploadDataToAirtable({"records":[{"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID)}], "typecast":True}, "Update")
+                    y = changeDataInAirtable({"records":[{"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID)}], "typecast":True}, "Update")
                 else:
-                    y = uploadDataToAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
+                    y = changeDataInAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
                     if type(y) == dict:
                         ATRecords.records[GUID] = y['id']
                 # print(getInfoFromGUID(GUID))
@@ -229,7 +255,7 @@ def main():
             # elif trigger == win32event.WAIT_OBJECT_0:
             #     hasTimedOut = False
         except Exception:
-            win32evtlog.CloseEventLog(eventLog)
+            win32evtlog.CloseEventLog(eventLog)     #not sure which one is correct, haven't tested yet
             evtSession.CloseEventLog()
             win32evtlog.CloseEventLog(eventLog2)
             evtSession2.CloseEventLog()
