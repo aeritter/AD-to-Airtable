@@ -57,9 +57,10 @@ eventIDs = {
     4726:"A user account was deleted.",
     4738:"A user account was changed.",
     4741:"A user account was created.",
-    4742:"A user account was changed.",
+    4742:"A computer account was changed.",
     4743:"A user account was deleted.",
-    5136:"A user account was changed"
+    5136:"A directory service object was changed.",
+    5141:"A directory service object was deleted."
 }
 
 convADAttributeToAirtableHeader = {
@@ -81,7 +82,7 @@ convADAttributeToAirtableHeader = {
 }
 
 # xmlQuery = "*[System[(EventID=4720 or (EventID >= 4722 and EventID <= 4726) or (EventID=4738) or (EventID >= 4741 and EventID <= 4743))] and EventData[Data[@Name='SubjectDomainName']!='NT AUTHORITY'] and EventData[Data[@Name='ObjectClass']!='computer']]"
-xmlQuery = "*[System[({})] and EventData[Data[@Name='SubjectDomainName']!='NT AUTHORITY'] and EventData[Data[@Name='ObjectClass']!='computer']]".format(' or '.join("EventID="+str(x) for x in eventIDs))
+xmlQuery = "*[System[({})] and EventData[Data[@Name='SubjectDomainName']!='NT AUTHORITY'] and EventData[Data[@Name='ObjectClass']='user']]".format(' or '.join("EventID="+str(x) for x in eventIDs))
 
 class airtable:
     def __init__(self):
@@ -124,7 +125,7 @@ def postOrUpdate(content, sendType):
         return requests.post(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
     elif sendType == "Update":
         return requests.patch(airtableURL,data=None,json=content,headers=AirtableAPIHeaders)
-    elif sendType == "Remove":          # Content must be a string containing a single record ID.
+    elif sendType == "Delete":          # Content must be a string containing a single record ID.
         return requests.delete(airtableURL+"/"+content,headers=AirtableAPIHeaders)
 
 
@@ -166,7 +167,11 @@ def retrieveRecordsFromAD(ADSearchAttributes, ADSearchParams):
     return adlist
 
 def getInfoFromGUID(GUID):
-    return retrieveRecordsFromAD(allADSearchAttributes, {'objectGUID':GUID})[GUID]
+    info = retrieveRecordsFromAD(allADSearchAttributes, {'objectGUID':GUID})
+    if len(info) > 0:
+        return info[GUID]
+    else:
+        return None
 
 def initialCheck(ATRecords):
     ADrecords = retrieveRecordsFromAD(allADSearchAttributes, allUserADSearchParams)
@@ -182,7 +187,7 @@ def initialCheck(ATRecords):
     for x in ATRecords.records:
         if x not in ADrecords:
             print('id to remove: '+ATRecords.records[x])
-            changeDataInAirtable(ATRecords.records[x], "Remove")
+            changeDataInAirtable(ATRecords.records[x], "Delete")
     print("Done removing bad records")
 
     print("Updating current entries in Airtable.")
@@ -206,6 +211,7 @@ def main():
     evtSession2 = win32evtlog.EvtOpenSession(evtSessionCredentials2, win32evtlog.EvtRpcLogin, 0, 0)
     # eventPulse = win32event.CreateEvent(None, 0, 0, None)
     ADAccountsChanged = set()
+    ADAccountsDeleted = set()
     ATRecords = airtable()
     initialCheck(ATRecords)                         # Verify all AD records are present in AT on script startup, add missing records
 
@@ -216,8 +222,12 @@ def main():
         xmlData = win32evtlog.EvtRender(eventContent, win32evtlog.EvtRenderEventXml)
         GUID = re.search(r'<Data Name=\'ObjectGUID\'>(.*?)</Data>', xmlData).group(1)
         subjectusername = re.search(r'<Data Name=\'SubjectUserName\'>(.*?)</Data.', xmlData).group(1)
+        eventID = re.search(r'<EventID>(.*?)</EventID>', xmlData).group(1)
         badGUID = bool('$' in subjectusername or len(subjectusername) == 0)  # badGUID = True if the SubjectUserName has a $ in it OR has no text. False otherwise.
-        if not badGUID:
+        print(eventID)
+        if eventID == '4726' or eventID == '5141':
+            ADAccountsDeleted.add(GUID.lower())
+        elif not badGUID:
             ADAccountsChanged.add(GUID.lower())
         # win32event.PulseEvent(eventPulse)
 
@@ -230,24 +240,32 @@ def main():
             time.sleep(10)  # every 10 seconds, check if a user has been updated and reconcile records
                             # Maybe: Remove this, use trigger below. If pulse comes, wait 1 second. If another pulse comes during that time, reset the wait. If one doesn't, continue processing
 
-            if len(ADAccountsChanged) == 0:
+            if len(ADAccountsChanged) == 0 and len(ADAccountsDeleted) == 0:
                 continue
+
 
             if time.time() - ATRecords.lastRefreshTime > 3600:
                 ATRecords.reloadRecords()
 
             ADAccountsChanged_copy = [x for x in ADAccountsChanged]
             for GUID in ADAccountsChanged_copy:
-                print(GUID)
                 if GUID in ATRecords.records:
-                    print({"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID), "typecast":True})
                     y = changeDataInAirtable({"records":[{"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID)}], "typecast":True}, "Update")
                 else:
-                    y = changeDataInAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
-                    if type(y) == dict:
-                        ATRecords.records[GUID] = y['id']
+                    fields = getInfoFromGUID(GUID)
+                    if fields != None:
+                        y = changeDataInAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
+                        if type(y) == dict:
+                            ATRecords.records[GUID] = y['id']
                 # print(getInfoFromGUID(GUID))
                 ADAccountsChanged.remove(GUID)
+
+            ADAccountsDeleted_copy = [x for x in ADAccountsDeleted]
+            for GUID in ADAccountsDeleted_copy:
+                if GUID in ATRecords.records:
+                    changeDataInAirtable(ATRecords.records[GUID], "Delete")
+                    ATRecords.records.pop(GUID)
+                ADAccountsDeleted.remove(GUID)
 
             # trigger = win32event.WaitForSingleObject(eventPulse, 60000)
             # if trigger == win32event.WAIT_TIMEOUT:
