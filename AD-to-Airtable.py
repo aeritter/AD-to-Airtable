@@ -224,7 +224,7 @@ def main():
         subjectusername = re.search(r'<Data Name=\'SubjectUserName\'>(.*?)</Data.', xmlData).group(1)
         eventID = re.search(r'<EventID>(.*?)</EventID>', xmlData).group(1)
         badGUID = bool('$' in subjectusername or len(subjectusername) == 0)  # badGUID = True if the SubjectUserName has a $ in it OR has no text. False otherwise.
-        print(eventID)
+        print("EventID: "+eventID)
         if eventID == '4726' or eventID == '5141':
             ADAccountsDeleted.add(GUID.lower())
         elif not badGUID:
@@ -251,19 +251,22 @@ def main():
             for GUID in ADAccountsChanged_copy:
                 if GUID in ATRecords.records:
                     y = changeDataInAirtable({"records":[{"id":ATRecords.records[GUID],"fields":getInfoFromGUID(GUID)}], "typecast":True}, "Update")
+                    print("Updated: "+y['records'][0]['fields']['Full Name'])
                 else:
                     fields = getInfoFromGUID(GUID)
                     if fields != None:
                         y = changeDataInAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
                         if type(y) == dict:
                             ATRecords.records[GUID] = y['id']
+                            print("Created: "+y['records'][0]['fields']['Full Name'])
                 # print(getInfoFromGUID(GUID))
                 ADAccountsChanged.remove(GUID)
 
             ADAccountsDeleted_copy = [x for x in ADAccountsDeleted]
             for GUID in ADAccountsDeleted_copy:
                 if GUID in ATRecords.records:
-                    changeDataInAirtable(ATRecords.records[GUID], "Delete")
+                    print("Removing: "+GUID)    # Could show name, but would need to pull it from Airtable
+                    y = changeDataInAirtable(ATRecords.records[GUID], "Delete")
                     ATRecords.records.pop(GUID)
                 ADAccountsDeleted.remove(GUID)
 
