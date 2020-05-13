@@ -38,9 +38,7 @@ allADSearchAttributes = [
     'company',
     'manager',
     'description'
-
 ]
-
 
 AirtableAPIHeaders = {
     "Authorization":str("Bearer "+airtableAPIKey),
@@ -78,7 +76,6 @@ convADAttributeToAirtableHeader = {
     'company':'Company',
     'manager':'Manager',
     'description':'Description'
-
 }
 
 # xmlQuery = "*[System[(EventID=4720 or (EventID >= 4722 and EventID <= 4726) or (EventID=4738) or (EventID >= 4741 and EventID <= 4743))] and EventData[Data[@Name='SubjectDomainName']!='NT AUTHORITY'] and EventData[Data[@Name='ObjectClass']!='computer']]"
@@ -135,7 +132,7 @@ def changeDataInAirtable(content, sendType):                 # uploads the data 
     x = postOrUpdate(content, sendType)
     print("\nPost HTTP code:", x.status_code, "  |   Send type:",sendType)
     if x.status_code == 200:                                 # if Airtable upload successful, move PDF files to Done folder
-        print("Success! Sent via "+sendType+"\n")
+        print("Success!\n")
         return json.loads(x.text)
     else:
         print(str(json.loads(x.text)['error']['message']))
@@ -258,7 +255,7 @@ def main():
                         y = changeDataInAirtable({"fields":getInfoFromGUID(GUID), "typecast":True}, "Post")
                         if type(y) == dict:
                             ATRecords.records[GUID] = y['id']
-                            print("Created: "+y['records'][0]['fields']['Full Name'])
+                            print("Created: "+y['fields']['Full Name'])
                 # print(getInfoFromGUID(GUID))
                 ADAccountsChanged.remove(GUID)
 
@@ -275,15 +272,11 @@ def main():
             #     hasTimedOut = True
             # elif trigger == win32event.WAIT_OBJECT_0:
             #     hasTimedOut = False
-        except Exception:
-            win32evtlog.CloseEventLog(eventLog)     #not sure which one is correct, haven't tested yet
-            evtSession.CloseEventLog()
+
+        except:
+            win32evtlog.CloseEventLog(eventLog)
+            win32evtlog.CloseEventLog(evtSession)
             win32evtlog.CloseEventLog(eventLog2)
-            evtSession2.CloseEventLog()
-        except KeyboardInterrupt:
-            eventLog.CloseEventLog()
-            evtSession.CloseEventLog()
-            eventLog2.CloseEventLog()
-            evtSession2.CloseEventLog()
+            win32evtlog.CloseEventLog(evtSession2)
 
 main()
